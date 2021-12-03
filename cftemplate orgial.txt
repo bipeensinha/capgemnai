@@ -1,0 +1,415 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: >-
+  Make an EC2 keypair and then launch this template. Creates two instances
+  behind a broken ELB. Browse to the ELB and verify that it doesn't work. Now
+  find the bug(s) and fix it/them
+Parameters:
+  KeyName:
+    Description: Name of an existing EC2 KeyPair
+    Type: 'AWS::EC2::KeyPair::KeyName'
+Mappings:
+  SubnetConfig:
+    VPC:
+      CIDR: 10.0.0.0/16
+    Public:
+      CIDR: 10.0.1.0/24
+  AWSRegionToAMI:
+    ap-south-1:
+      AMI: ami-a2d29fcd
+    eu-west-2:
+      AMI: ami-6d061a09
+    eu-west-1:
+      AMI: ami-0a0cac73
+    ap-northeast-2:
+      AMI: ami-bc8723d2
+    ap-northeast-1:
+      AMI: ami-9d07a8fb
+    sa-east-1:
+      AMI: ami-a27902ce
+    ca-central-1:
+      AMI: ami-3a3f875e
+    ap-southeast-1:
+      AMI: ami-60783403
+    ap-southeast-2:
+      AMI: ami-ab6b85c9
+    eu-central-1:
+      AMI: ami-4d890d22
+    us-east-1:
+      AMI: ami-c555e0bf
+    us-east-2:
+      AMI: ami-a91b34cc
+    us-west-1:
+      AMI: ami-99023df9
+    us-west-2:
+      AMI: ami-d4d913ac
+Resources:
+  VPC:
+    Type: 'AWS::EC2::VPC'
+    Properties:
+      EnableDnsSupport: 'true'
+      EnableDnsHostnames: 'true'
+      CidrBlock:
+        'Fn::FindInMap':
+          - SubnetConfig
+          - VPC
+          - CIDR
+      Tags:
+        - Key: Name
+          Value: TTT Delivery Workshop
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: 32a147e2-5a30-4215-b2bd-73cff01c4ede
+  PublicSubnet:
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      VpcId:
+        Ref: VPC
+      CidrBlock:
+        'Fn::FindInMap':
+          - SubnetConfig
+          - Public
+          - CIDR
+      AvailabilityZone:
+        'Fn::Select':
+          - '0'
+          - 'Fn::GetAZs': ''
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: 0012c47d-d46a-4988-810e-2905c1b521e9
+  InternetGateway:
+    Type: 'AWS::EC2::InternetGateway'
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: ef4c0fa7-ac0e-43ed-b05d-a94dcaf4bbfd
+  GatewayToInternet:
+    Type: 'AWS::EC2::VPCGatewayAttachment'
+    Properties:
+      VpcId:
+        Ref: VPC
+      InternetGatewayId:
+        Ref: InternetGateway
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: dfda3cc6-1331-48ed-ab3b-781a629c86fc
+  PublicRouteTable:
+    Type: 'AWS::EC2::RouteTable'
+    Properties:
+      VpcId:
+        Ref: VPC
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: 43aace28-1620-4da9-bbb2-c6dcbbf10661
+  PublicRoute:
+    Type: 'AWS::EC2::Route'
+    DependsOn: GatewayToInternet
+    Properties:
+      RouteTableId:
+        Ref: PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId:
+        Ref: InternetGateway
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: 7794c25e-7f58-4fdc-bc36-a8909b116a31
+  PublicSubnetRouteTableAssociation:
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+    Properties:
+      SubnetId:
+        Ref: PublicSubnet
+      RouteTableId:
+        Ref: PublicRouteTable
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: d6dfe2ad-80ef-4059-b056-97a6623e8cf5
+  SSHSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: SSH Access
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: '22'
+          ToPort: '22'
+          CidrIp: 0.0.0.0/0
+      VpcId:
+        Ref: VPC
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: 1d2f07b4-178d-4acd-9532-66ede5a4668e
+  WebSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: HTTP Access
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: '80'
+          ToPort: '80'
+          CidrIp: 0.0.0.0/0
+      VpcId:
+        Ref: VPC
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: ec819287-60cb-42d2-98ad-1426a6874a3d
+  WebServer01:
+    Type: 'AWS::EC2::Instance'
+    Properties:
+      ImageId:
+        'Fn::FindInMap':
+          - AWSRegionToAMI
+          - Ref: 'AWS::Region'
+          - AMI
+      InstanceType: t2.micro
+      KeyName:
+        Ref: KeyName
+      NetworkInterfaces:
+        - AssociatePublicIpAddress: 'True'
+          DeleteOnTermination: 'True'
+          SubnetId:
+            Ref: PublicSubnet
+          DeviceIndex: '0'
+          GroupSet:
+            - Ref: WebSecurityGroup
+            - Ref: SSHSecurityGroup
+      Tags:
+        - Key: Name
+          Value: 'Web Server #1'
+      UserData:
+        'Fn::Base64':
+          'Fn::Join':
+            - ''
+            - - |
+                #!/bin/bash -x
+              - |
+                exec &> /home/ec2-user/userdata.log
+              - |
+                yum install -y httpd
+              - |
+                chkconfig httpd on
+              - >
+                wget
+                https://us-west-2-tcprod.s3.amazonaws.com/courses/ILT-TF-100-SYSOPS/v3.2.0/lab-2-ec2-linux/scripts/dashboard-app.zip
+              - |
+                unzip dashboard-app.zip -d /var/www/html/
+              - |
+                service httpd start
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: 4a816d52-2958-4a99-b6c8-9bfc6ac5cca7
+  WebServer02:
+    Type: 'AWS::EC2::Instance'
+    Properties:
+      ImageId:
+        'Fn::FindInMap':
+          - AWSRegionToAMI
+          - Ref: 'AWS::Region'
+          - AMI
+      InstanceType: t2.micro
+      KeyName:
+        Ref: KeyName
+      NetworkInterfaces:
+        - AssociatePublicIpAddress: 'True'
+          DeleteOnTermination: 'True'
+          SubnetId:
+            Ref: PublicSubnet
+          DeviceIndex: '0'
+          GroupSet:
+            - Ref: WebSecurityGroup
+            - Ref: SSHSecurityGroup
+      Tags:
+        - Key: Name
+          Value: 'Web Server #2'
+      UserData:
+        'Fn::Base64':
+          'Fn::Join':
+            - ''
+            - - |
+                #!/bin/bash -x
+              - |
+                exec &> /home/ec2-user/userdata.log
+              - |
+                yum install -y httpd
+              - |
+                chkconfig httpd on
+              - >
+                wget
+                https://us-west-2-tcprod.s3.amazonaws.com/courses/ILT-TF-100-SYSOPS/v3.2.0/lab-2-ec2-linux/scripts/dashboard-app.zip
+              - |
+                unzip dashboard-app.zip -d /var/www/html/
+              - |
+                service httpd start
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: 3744dcc3-b119-4c1f-b615-96f172674445
+  ElasticLoadBalancer:
+    Type: 'AWS::ElasticLoadBalancing::LoadBalancer'
+    Properties:
+      LoadBalancerName: ttt-elb
+      Instances:
+        - Ref: WebServer01
+        - Ref: WebServer02
+      Subnets:
+        - Ref: PublicSubnet
+      Listeners:
+        - LoadBalancerPort: '80'
+          InstancePort: '80'
+          Protocol: HTTP
+      HealthCheck:
+        Target:
+          'Fn::Join':
+            - ''
+            - - 'HTTP:'
+              - '80'
+              - /index.html
+        HealthyThreshold: '3'
+        UnhealthyThreshold: '5'
+        Interval: '30'
+        Timeout: '5'
+      SecurityGroups:
+        - Ref: WebSecurityGroup
+    DependsOn: GatewayToInternet
+    Metadata:
+      'AWS::CloudFormation::Designer':
+        id: fa82d076-47f8-4ca1-8f4a-cb4489c76e74
+Metadata:
+  'AWS::CloudFormation::Designer':
+    ef4c0fa7-ac0e-43ed-b05d-a94dcaf4bbfd:
+      size:
+        width: 60
+        height: 60
+      position:
+        x: 60
+        'y': 840
+      z: 1
+      embeds: []
+    32a147e2-5a30-4215-b2bd-73cff01c4ede:
+      size:
+        width: 780
+        height: 690
+      position:
+        x: 60
+        'y': 90
+      z: 1
+      embeds:
+        - ec819287-60cb-42d2-98ad-1426a6874a3d
+        - 1d2f07b4-178d-4acd-9532-66ede5a4668e
+        - 43aace28-1620-4da9-bbb2-c6dcbbf10661
+        - 0012c47d-d46a-4988-810e-2905c1b521e9
+    ec819287-60cb-42d2-98ad-1426a6874a3d:
+      size:
+        width: 60
+        height: 60
+      position:
+        x: 480
+        'y': 450
+      z: 2
+      parent: 32a147e2-5a30-4215-b2bd-73cff01c4ede
+      embeds: []
+      iscontainedinside:
+        - 32a147e2-5a30-4215-b2bd-73cff01c4ede
+    1d2f07b4-178d-4acd-9532-66ede5a4668e:
+      size:
+        width: 60
+        height: 60
+      position:
+        x: 600
+        'y': 450
+      z: 2
+      parent: 32a147e2-5a30-4215-b2bd-73cff01c4ede
+      embeds: []
+      iscontainedinside:
+        - 32a147e2-5a30-4215-b2bd-73cff01c4ede
+    43aace28-1620-4da9-bbb2-c6dcbbf10661:
+      size:
+        width: 240
+        height: 240
+      position:
+        x: 480
+        'y': 150
+      z: 2
+      parent: 32a147e2-5a30-4215-b2bd-73cff01c4ede
+      embeds:
+        - 7794c25e-7f58-4fdc-bc36-a8909b116a31
+      iscontainedinside:
+        - 32a147e2-5a30-4215-b2bd-73cff01c4ede
+    dfda3cc6-1331-48ed-ab3b-781a629c86fc:
+      source:
+        id: 32a147e2-5a30-4215-b2bd-73cff01c4ede
+      target:
+        id: ef4c0fa7-ac0e-43ed-b05d-a94dcaf4bbfd
+    7794c25e-7f58-4fdc-bc36-a8909b116a31:
+      size:
+        width: 60
+        height: 60
+      position:
+        x: 510
+        'y': 210
+      z: 3
+      parent: 43aace28-1620-4da9-bbb2-c6dcbbf10661
+      embeds: []
+      isassociatedwith:
+        - ef4c0fa7-ac0e-43ed-b05d-a94dcaf4bbfd
+      iscontainedinside:
+        - 43aace28-1620-4da9-bbb2-c6dcbbf10661
+      dependson:
+        - dfda3cc6-1331-48ed-ab3b-781a629c86fc
+    0012c47d-d46a-4988-810e-2905c1b521e9:
+      size:
+        width: 330
+        height: 330
+      position:
+        x: 70
+        'y': 140
+      z: 2
+      parent: 32a147e2-5a30-4215-b2bd-73cff01c4ede
+      embeds:
+        - 3744dcc3-b119-4c1f-b615-96f172674445
+        - 4a816d52-2958-4a99-b6c8-9bfc6ac5cca7
+        - fa82d076-47f8-4ca1-8f4a-cb4489c76e74
+      iscontainedinside:
+        - 32a147e2-5a30-4215-b2bd-73cff01c4ede
+    3744dcc3-b119-4c1f-b615-96f172674445:
+      size:
+        width: 60
+        height: 60
+      position:
+        x: 100
+        'y': 200
+      z: 3
+      parent: 0012c47d-d46a-4988-810e-2905c1b521e9
+      embeds: []
+      iscontainedinside:
+        - 0012c47d-d46a-4988-810e-2905c1b521e9
+    4a816d52-2958-4a99-b6c8-9bfc6ac5cca7:
+      size:
+        width: 60
+        height: 60
+      position:
+        x: 220
+        'y': 200
+      z: 3
+      parent: 0012c47d-d46a-4988-810e-2905c1b521e9
+      embeds: []
+      iscontainedinside:
+        - 0012c47d-d46a-4988-810e-2905c1b521e9
+    fa82d076-47f8-4ca1-8f4a-cb4489c76e74:
+      size:
+        width: 60
+        height: 60
+      position:
+        x: 100
+        'y': 320
+      z: 3
+      parent: 0012c47d-d46a-4988-810e-2905c1b521e9
+      embeds: []
+      isassociatedwith:
+        - 4a816d52-2958-4a99-b6c8-9bfc6ac5cca7
+        - 3744dcc3-b119-4c1f-b615-96f172674445
+        - ec819287-60cb-42d2-98ad-1426a6874a3d
+      iscontainedinside:
+        - 0012c47d-d46a-4988-810e-2905c1b521e9
+      dependson:
+        - dfda3cc6-1331-48ed-ab3b-781a629c86fc
+    d6dfe2ad-80ef-4059-b056-97a6623e8cf5:
+      source:
+        id: 43aace28-1620-4da9-bbb2-c6dcbbf10661
+      target:
+        id: 0012c47d-d46a-4988-810e-2905c1b521e9
